@@ -1,0 +1,1 @@
+print("Assalomu alaykum, Forex AI bot loyihasi boshlandi!")
