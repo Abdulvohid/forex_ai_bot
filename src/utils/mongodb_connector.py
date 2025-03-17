@@ -1,4 +1,4 @@
-# src/utils/mongodb_connector.py
+# FILE: src/utils/mongodb_connector.py
 
 import os
 from pymongo import MongoClient
@@ -6,35 +6,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 1. MONGODB_URI ni .env faylidan o‘qish
-MONGODB_URI = os.getenv("MONGODB_URI")
-
-# 2. MongoClient bilan ulanish
-client = MongoClient(MONGODB_URI)
-
-# 3. Bazani ochish (forex_signals) va collection (signals)
+MONGO_URI = os.getenv("MONGO_URI")
+client = MongoClient(MONGO_URI)
 db = client["forex_signals"]
+
 signals_collection = db["signals"]
 
-def insert_signal(signal_data):
-    """
-    Yangi signal hujjatini 'signals' collection'ga qo‘shadi.
-    """
-    signals_collection.insert_one(signal_data)
+def signal_exists(signal_number: int) -> bool:
+    """Mazkur signal_number bilan oldin signal yuborilganmi-yo'qmi tekshiradi."""
+    existing = signals_collection.find_one({"signal_number": signal_number})
+    return existing is not None
 
-def signal_exists(signal_number):
-    """
-    Berilgan 'signal_number' dagi hujjat bazada bormi-yo‘qligini tekshiradi.
-    """
-    doc = signals_collection.find_one({"signal_number": signal_number})
-    return doc is not None
-
-def get_last_signal_number():
-    """
-    signals collection'dagi eng katta signal_number qiymatini qaytaradi.
-    Agar hech narsa bo‘lmasa, 0 qaytaradi.
-    """
+def get_last_signal_number() -> int:
     last_signal = signals_collection.find_one(sort=[("signal_number", -1)])
-    if last_signal:
-        return last_signal["signal_number"]
-    return 0
+    return last_signal["signal_number"] if last_signal else 0
+
+def insert_signal(signal_data: dict):
+    """Yangi signal hujjatini 'signals' kolleksiyasiga kiritish."""
+    signals_collection.insert_one(signal_data)
+    print(f"[MongoDB] Signal #{signal_data['signal_number']} bazaga qo'shildi.")

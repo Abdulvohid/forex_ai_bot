@@ -1,11 +1,14 @@
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 from telegram import Bot
 
-from src.utils.data_fetcher import fetch_forex_data
+# Yangi o'zgartirish: data_fetcher_mt5.py ga murojaat qilamiz
+import MetaTrader5 as mt5
+from src.utils.data_fetcher_mt5 import fetch_mt_data
+
 from src.indicators.indicators import (
     calculate_ema, calculate_rsi, calculate_macd,
     calculate_bollinger_bands, calculate_stochastic,
@@ -31,8 +34,23 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 bot = Bot(token=BOT_TOKEN)
 
 def main():
-    # 1. Bozor data (1 soatlik GBP/USD)
-    df = fetch_forex_data(symbol="GBP/USD", interval="1h", outputsize=5000)
+    # 1. Bozor data (1 soatlik GBPUSD) - so'nggi 30 kun
+    #    Agar aniq oraliq bersangiz, start_date & end_date ni o'zgartiring.
+    if not mt5.initialize():
+        print("[MT5] initialize xato:", mt5.last_error())
+        return
+
+    df = fetch_mt_data(
+        symbol="GBPUSD",
+        timeframe=mt5.TIMEFRAME_H1,
+        start_date=datetime.now() - timedelta(days=30),
+        end_date=datetime.now()
+    )
+    mt5.shutdown()
+
+    if df.empty:
+        print("[telegram_ai_bot] Data bo'sh, signal yaratilmaydi.")
+        return
 
     # 2. Indikatorlar
     df['EMA_14'] = calculate_ema(df, period=14)
@@ -41,7 +59,7 @@ def main():
     df['BB_upper'], df['BB_middle'], df['BB_lower'] = calculate_bollinger_bands(df)
     df['Stoch_%K'], df['Stoch_%D'] = calculate_stochastic(df)
     df['ADX'] = calculate_adx(df)
-    df['ATR'] = calculate_atr(df)
+    df['ATR'] = calculate_atr(df, period=14)
 
     # 3. Strategy signal (BUY/SELL/HOLD)
     df = generate_trade_signals(df)
@@ -49,18 +67,17 @@ def main():
     predicted_signal, probability = predict_signal(latest_row)
 
     # 4. --> Shart-1: Avvalgi signal hali "active" bo'lsa, yangisini yubormaymiz
-    active_signal = signals_collection.find_one({
-        "currency_pair": "GBP/USD",
-        "status": "active"
-    })
-    if active_signal:
-        print("Avvalgi signal hali yopilmagan (active), yangisini yubormaymiz.")
-        return
+    # active_signal = signals_collection.find_one({
+    #     "currency_pair": "GBPUSD",
+    #     "status": "active"
+    # })
+    # if active_signal:
+    #     print("Avvalgi signal hali yopilmagan (active), yangisini yubormaymiz.")
+    #     return
 
     # 5. --> Shart-2: Narx yetarlicha o'zgarmagan bo'lsa, yubormaslik
-    # Oxirgi signal (ENG) ni topamiz
     last_signal = signals_collection.find_one(
-        {"currency_pair": "GBP/USD"},
+        {"currency_pair": "GBPUSD"},
         sort=[("signal_number", -1)]
     )
 
@@ -68,7 +85,7 @@ def main():
     if last_signal:
         old_price = last_signal["entry_price"]  # Oxirgi signalning narxi
         price_diff = abs(current_price - old_price)
-        if price_diff < 0.0003:  # Masalan, 3 pip o'zgarmagan bo'lsa, skip
+        if price_diff < 0.0003:  # Masalan, 3 pip
             print(f"Narx {price_diff:.5f} pipdan kam o'zgardi, yangisini yubormaymiz.")
             return
 
@@ -89,7 +106,7 @@ def main():
     # 9. Telegram xabari
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     message = (
-        f"📊 Valyuta juftligi: GBP/USD (H1)\n"
+        f"📊 Valyuta juftligi: GBPUSD (H1)\n"
         f"🕒 Vaqt: {current_time}\n"
         f"📍 Joriy narx: {current_price:.5f}\n"
         f"📌 Signal: {predicted_signal}\n"
@@ -105,7 +122,7 @@ def main():
     # 10. MongoDB ga yozish
     signal_data = {
         "signal_number": signal_number,
-        "currency_pair": "GBP/USD",
+        "currency_pair": "GBPUSD",
         "interval": "H1",
         "timestamp": current_time,
         "entry_price": current_price,

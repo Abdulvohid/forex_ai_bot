@@ -1,57 +1,93 @@
+import os
 import pandas as pd
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.metrics import accuracy_score, classification_report
+from dotenv import load_dotenv
+from pymongo import MongoClient
+import joblib
+
+import numpy as np
 from lightgbm import LGBMClassifier
-from strategy import generate_trade_signals
-from main import df
-import joblib  # yangi qo'shildi
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, accuracy_score
 
-# AI uchun ma'lumot tayyorlash
-df = generate_trade_signals(df)
+load_dotenv()
 
-# Indikatorlarni tanlash
-features = [
-    'EMA_14', 'RSI_14', 'MACD_histogram', 
-    'BB_upper', 'BB_middle', 'BB_lower', 
-    'Stoch_%K', 'Stoch_%D', 'ADX'
-]
+MONGO_URI = os.getenv("MONGO_URI")
+if not MONGO_URI:
+    print("[train_ai_model] MONGO_URI topilmadi. .env ni tekshiring.")
+    exit()
 
-# HOLD signallarni olib tashlash (faqat BUY/SELL)
-df_filtered = df[df['Signal'] != 'HOLD'].copy()
+client = MongoClient(MONGO_URI)
+db = client["forex_signals"]
 
-X = df_filtered[features]
-y = df_filtered['Signal']
+def main():
+    coll_name = "GBPUSD_H1_full"
+    docs = list(db[coll_name].find())
+    if not docs:
+        print(f"[train_ai_model] {coll_name} bo'sh!")
+        return
 
-# Train va Testga bo'lish (80/20)
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, shuffle=False
-)
+    df = pd.DataFrame(docs)
+    if "_id" in df.columns:
+        df.drop("_id", axis=1, inplace=True)
 
-# LightGBM modelini yaratish va optimallashtirilgan parametrlarda o'qitish
-model = LGBMClassifier(
-    n_estimators=1000,
-    learning_rate=0.01,
-    max_depth=8,
-    num_leaves=32,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    random_state=42
-)
+    df["time"] = pd.to_datetime(df["time"])
+    df.sort_values("time", inplace=True, ignore_index=True)
+    print(f"[train_ai_model] {coll_name} => {len(df)} satr.")
 
-model.fit(X_train, y_train)
+    # 7 ustun: EMA_5, EMA_9, EMA_20, RSI_14, ATR, ADX, MACD_hist
+    feats = ["EMA_5","EMA_9","EMA_20","RSI_14","ATR","ADX","MACD_hist"]
+    for f in feats:
+        if f not in df.columns:
+            print(f"[train_ai_model] Ustun '{f}' topilmadi. Indikatorni tekshiring.")
+            return
 
-# Bashorat qilish
-y_pred = model.predict(X_test)
+    # Label (Signal) - misol BUY/SELL/HOLD
+    df["Signal"] = "HOLD"
+    # Soddalashtirilgan - (EMA_5>EMA_9>EMA_20 & RSI>50 & ADX>20 => BUY), (aksincha => SELL)
+    df.loc[
+        (df["EMA_5"] > df["EMA_9"]) &
+        (df["EMA_9"] > df["EMA_20"]) &
+        (df["RSI_14"] > 50) &
+        (df["ADX"] > 20),
+        "Signal"
+    ] = "BUY"
 
-# Natijalarni baholash
-accuracy = accuracy_score(y_test, y_pred)
-print(f"Model aniqligi: {accuracy * 100:.2f}%")
-print(classification_report(y_test, y_pred))
+    df.loc[
+        (df["EMA_5"] < df["EMA_9"]) &
+        (df["EMA_9"] < df["EMA_20"]) &
+        (df["RSI_14"] < 50) &
+        (df["ADX"] > 20),
+        "Signal"
+    ] = "SELL"
 
-# Cross-validation orqali tekshirish
-scores = cross_val_score(model, X, y, cv=5)
-print(f"Cross-validation aniqligi: {scores.mean()*100:.2f}% (+/- {scores.std()*100:.2f}%)")
+    # X,y
+    X = df[feats]
+    y = df["Signal"]
 
-# Modelni faylga saqlash (yangi qo'shilgan qism)
-joblib.dump(model, 'signal_model.pkl')
-print("signal_model.pkl fayli muvaffaqiyatli yaratildi.")
+    combined = pd.concat([X,y], axis=1).dropna()
+    X = combined[feats]
+    y = combined["Signal"]
+
+    print(f"[train_ai_model] X.shape={X.shape}, y.shape={y.shape}, classes={y.unique()}")
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, shuffle=False
+    )
+
+    model = LGBMClassifier(
+        n_estimators=300,
+        max_depth=5,
+        random_state=42
+    )
+    model.fit(X_train, y_train)
+
+    y_pred = model.predict(X_test)
+    acc = accuracy_score(y_test, y_pred)
+    print(f"[train_ai_model] Aniqlik: {acc*100:.2f}%")
+    print(classification_report(y_test, y_pred))
+
+    joblib.dump(model, "gbpusd_model.pkl")
+    print("[train_ai_model] Model 'gbpusd_model.pkl' saqlandi.")
+
+if __name__=="__main__":
+    main()

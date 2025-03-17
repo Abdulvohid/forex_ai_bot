@@ -2,54 +2,37 @@ import os
 import sys
 from subprocess import Popen
 
-# 1) "src" papkasini Python import yo'liga (sys.path) qo'shamiz,
-#    shunda "from src.xyz" importlari "main.py" chaqilganda ham ishlaydi.
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.join(SCRIPT_DIR, 'src')
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
-# 2) Endi "src" papkasidagi modullarni import qilamiz.
-from utils.data_fetcher import fetch_forex_data
-from indicators.indicators import (
-    calculate_ema,
-    calculate_rsi,
-    calculate_macd,
-    calculate_bollinger_bands,
-    calculate_stochastic,
-    calculate_adx,
-    calculate_atr
-)
-
-# Windows muhiti uchun aniq venv python ni olish
-# (Agar Mac/Linux bo'lsa, bu 'venv/bin/python' bo'lishi mumkin.)
+# Windows muhiti uchun aniq venv python ni olish.
+# Agar Mac/Linux bo'lsa, 'venv/bin/python' bo'lishi mumkin.
 venv_python = os.path.join('.', 'venv', 'Scripts', 'python.exe')
+if not os.path.exists(venv_python):
+    venv_python = os.path.join('.', 'venv', 'bin', 'python')
 
 def main():
-    # 1) GBP/USD narx ma'lumotlarini yuklash
-    df = fetch_forex_data(symbol="GBP/USD", interval="1h", outputsize=5000)
+    """
+    1) live_demo_trading.py -> Robot
+    2) trade_monitor.py -> TP/SL kuzatish
+    3) daily_report.py -> Kunlik hisobot (bir martalik skript)
+    """
+    print("[main.py] Robot (live_demo_trading) ni ishga tushiramiz...")
+    p1 = Popen([venv_python, "-m", "src.trade.live_demo_trading"])
 
-    # 2) Indikatorlarni hisoblash
-    df['EMA_14'] = calculate_ema(df, period=14)
-    df['RSI_14'] = calculate_rsi(df, period=14)
-    df['MACD'], df['MACD_signal'], df['MACD_histogram'] = calculate_macd(df)
-    df['BB_upper'], df['BB_middle'], df['BB_lower'] = calculate_bollinger_bands(df)
-    df['Stoch_%K'], df['Stoch_%D'] = calculate_stochastic(df)
-    df['ADX'] = calculate_adx(df)
-    df['ATR'] = calculate_atr(df, period=14)
+    print("[main.py] Monitor (trade_monitor) ni ishga tushiramiz...")
+    p2 = Popen([venv_python, "-m", "src.trade.trade_monitor"])
 
-    # 3) Hisoblangan indikatorlarni terminalda ko‘rib chiqish
-    print(df.tail(10))
-    print(f"Ma'lumotlar soni: {len(df)} ta qator")
+    print("[main.py] Daily report (daily_report) ni ishga tushiramiz...")
+    p3 = Popen([venv_python, "-m", "src.trade.daily_report"])
 
-    # 4) Boshqa Telegram skriptlarni ishga tushirish
-    #    "-m" bayrog‘i bilan paket sifatida ishga tushiriladi
-    Popen([venv_python, "-m", "src.telegram.telegram_ai_bot"])
-    Popen([venv_python, "-m", "src.telegram.signal_monitor"])
-    Popen([venv_python, "-m", "src.telegram.auto_monitor"])
+    print("[main.py] Barcha jarayonlar ishga tushirildi. Terminal loglarini kuzating...")
 
-    print("Barcha skriptlar ishga tushirildi...")
+    p1.wait()
+    p2.wait()
+    p3.wait()
 
 if __name__ == "__main__":
     main()
