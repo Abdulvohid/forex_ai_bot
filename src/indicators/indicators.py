@@ -1,3 +1,5 @@
+# FILE: src/indicators/indicators.py
+
 import pandas as pd
 
 def calculate_ema(df, period=14, column='close'):
